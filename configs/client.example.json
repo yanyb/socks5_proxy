@@ -1,0 +1,8 @@
+{
+  "device_id": "phone-1",
+  "token": "",
+  "server_addr": "127.0.0.1:8443",
+  "heartbeat_interval": "30s",
+  "reconnect_initial_backoff": "1s",
+  "reconnect_max_backoff": "60s"
+}
