@@ -267,13 +267,14 @@ func handleConnectStream(ctx context.Context, stream net.Conn, logger *log.Logge
 		})
 		return
 	}
-	logger.Printf("connecting to ", env.Address)
+	logger.Printf("connecting to %v ", env.Address)
 	network := env.Network
 	if network == "" {
 		network = "tcp"
 	}
 	target, err := dialConnectTarget(ctx, network, env.Address, lookup)
 	if err != nil {
+		logger.Printf("connecting to %v err %v", env.Address, err)
 		_ = protocol.WriteLine(stream, &protocol.Envelope{
 			Type:    protocol.TypeConnectResult,
 			ID:      env.ID,

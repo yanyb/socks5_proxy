@@ -11,9 +11,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/things-go/go-socks5"
 	"my_socks5_proxy/internal/config"
 	"my_socks5_proxy/internal/hub"
+
+	"github.com/things-go/go-socks5"
 )
 
 func main() {
