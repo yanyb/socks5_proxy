@@ -43,6 +43,8 @@ func DialThroughDevice(
 		return nil, fmt.Errorf("hub: open stream: %w", err)
 	}
 
+	fmt.Println("connect to ", network, addr)
+
 	id := randomID()
 	if err := protocol.WriteLine(stream, &protocol.Envelope{
 		Type:    protocol.TypeConnect,

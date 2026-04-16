@@ -9,8 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/hashicorp/yamux"
 	"my_socks5_proxy/internal/protocol"
+
+	"github.com/hashicorp/yamux"
 )
 
 // ServeDevice accepts one TLS+TCP connection from a device, runs yamux server, handles register + control stream.
@@ -112,7 +113,11 @@ func ServeDevice(
 			mu.Lock()
 			lastBeat = time.Now()
 			mu.Unlock()
-			_ = protocol.WriteLine(stream, &protocol.Envelope{Type: protocol.TypeHeartbeatAck, Ts: env.Ts})
+			log.Println("device: recv heartbeat", first.DeviceID)
+			err = protocol.WriteLine(stream, &protocol.Envelope{Type: protocol.TypeHeartbeatAck, Ts: env.Ts})
+			if err != nil {
+				log.Printf("device: write %s: %v", first.DeviceID, err)
+			}
 		default:
 			// ignore unknown on control stream
 		}
