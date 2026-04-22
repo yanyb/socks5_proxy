@@ -92,6 +92,22 @@ func (r *Registry) Get(deviceID string) (*yamux.Session, bool) {
 	return s, ok
 }
 
+// CloseAll closes every active yamux session. It does not delete entries from the
+// map: each ServeDevice goroutine is responsible for calling Remove via its own
+// deferred cleanup once its session shuts down. Safe to call concurrently with
+// Put/Remove/Get.
+func (r *Registry) CloseAll() {
+	r.mu.RLock()
+	sessions := make([]*yamux.Session, 0, len(r.sessions))
+	for _, s := range r.sessions {
+		sessions = append(sessions, s)
+	}
+	r.mu.RUnlock()
+	for _, s := range sessions {
+		_ = s.Close()
+	}
+}
+
 // WaitSession waits until wantID is online or ctx is cancelled.
 func (r *Registry) WaitSession(ctx context.Context, wantID string) (*yamux.Session, string, error) {
 	wantID = strings.TrimSpace(wantID)

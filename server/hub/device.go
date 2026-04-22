@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"context"
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
 	"xsocks5/protocol"
 
 	"github.com/hashicorp/yamux"
+	"github.com/sirupsen/logrus"
 )
 
 // ServeDevice accepts one TLS+TCP connection from a device, runs yamux server, handles register + control stream.
@@ -18,9 +18,15 @@ func ServeDevice(
 	raw net.Conn,
 	reg *Registry,
 	heartbeatTimeout time.Duration,
-	log *log.Logger,
+	logger *logrus.Logger,
 ) {
 	defer raw.Close()
+
+	remote := raw.RemoteAddr().String()
+	connLog := logger.WithFields(logrus.Fields{
+		"component":   "device",
+		"remote_addr": remote,
+	})
 
 	cfg := yamux.DefaultConfig()
 	cfg.EnableKeepAlive = true
@@ -28,21 +34,21 @@ func ServeDevice(
 
 	sess, err := yamux.Server(raw, cfg)
 	if err != nil {
-		log.Printf("device: yamux server: %v", err)
+		connLog.WithError(err).Error("yamux server")
 		return
 	}
 	defer sess.Close()
 
 	stream, err := sess.AcceptStream()
 	if err != nil {
-		log.Printf("device: accept first stream: %v", err)
+		connLog.WithError(err).Error("accept first stream")
 		return
 	}
 
 	br := bufio.NewReader(stream)
 	first, err := protocol.ReadLine(br)
 	if err != nil {
-		log.Printf("device: read register: %v", err)
+		connLog.WithError(err).Error("read register")
 		_ = stream.Close()
 		return
 	}
@@ -56,17 +62,19 @@ func ServeDevice(
 		return
 	}
 
+	devLog := connLog.WithField("device_id", first.DeviceID)
+
 	if err := protocol.WriteLine(stream, &protocol.Envelope{
 		Type: protocol.TypeRegisterAck,
 		OK:   true,
 	}); err != nil {
-		log.Printf("device: write register_ack: %v", err)
+		devLog.WithError(err).Error("write register_ack")
 		_ = stream.Close()
 		return
 	}
 
 	reg.Put(first.DeviceID, sess)
-	log.Printf("device: registered %s", first.DeviceID)
+	devLog.Info("registered")
 
 	defer reg.Remove(first.DeviceID, sess)
 
@@ -89,7 +97,7 @@ func ServeDevice(
 					stale := time.Since(lastBeat) > heartbeatTimeout
 					mu.Unlock()
 					if stale {
-						log.Printf("device: heartbeat timeout, closing %s", first.DeviceID)
+						devLog.Warn("heartbeat timeout, closing")
 						_ = raw.Close()
 						cancel()
 						return
@@ -103,7 +111,9 @@ func ServeDevice(
 		env, err := protocol.ReadLine(br)
 		if err != nil {
 			if err != io.EOF {
-				log.Printf("device: control read %s: %v", first.DeviceID, err)
+				devLog.WithError(err).Error("control read")
+			} else {
+				devLog.Debug("control stream closed")
 			}
 			return
 		}
@@ -112,13 +122,12 @@ func ServeDevice(
 			mu.Lock()
 			lastBeat = time.Now()
 			mu.Unlock()
-			log.Println("device: recv heartbeat", first.DeviceID)
-			err = protocol.WriteLine(stream, &protocol.Envelope{Type: protocol.TypeHeartbeatAck, Ts: env.Ts})
-			if err != nil {
-				log.Printf("device: write %s: %v", first.DeviceID, err)
+			devLog.WithField("ts", env.Ts).Debug("recv heartbeat")
+			if err := protocol.WriteLine(stream, &protocol.Envelope{Type: protocol.TypeHeartbeatAck, Ts: env.Ts}); err != nil {
+				devLog.WithError(err).Error("write heartbeat_ack")
 			}
 		default:
-			// ignore unknown on control stream
+			devLog.WithField("type", env.Type).Debug("ignore unknown control frame")
 		}
 	}
 }

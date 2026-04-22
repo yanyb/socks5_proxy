@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"xsocks5/protocol"
+
+	"github.com/sirupsen/logrus"
 )
 
 // DialThroughDevice opens a new yamux stream to the chosen device, performs connect handshake, and returns the stream for relay (implements net.Conn).
@@ -17,6 +19,7 @@ import (
 func DialThroughDevice(
 	ctx context.Context,
 	reg *Registry,
+	logger *logrus.Logger,
 	targetDeviceID string,
 	deviceWait time.Duration,
 	resultWait time.Duration,
@@ -43,9 +46,15 @@ func DialThroughDevice(
 		return nil, fmt.Errorf("hub: open stream: %w", err)
 	}
 
-	fmt.Println("connect to ", network, addr)
-
 	id := randomID()
+	connLog := logger.WithFields(logrus.Fields{
+		"component": "dial",
+		"device_id": targetDeviceID,
+		"conn_id":   id,
+		"network":   network,
+		"target":    addr,
+	})
+	connLog.Info("connect through device")
 	if err := protocol.WriteLine(stream, &protocol.Envelope{
 		Type:    protocol.TypeConnect,
 		ID:      id,
@@ -78,14 +87,17 @@ func DialThroughDevice(
 	select {
 	case <-readCtx.Done():
 		_ = stream.Close()
+		connLog.WithError(readCtx.Err()).Warn("connect_result timeout")
 		return nil, readCtx.Err()
 	case r := <-ch:
 		if r.err != nil {
 			_ = stream.Close()
+			connLog.WithError(r.err).Warn("read connect_result")
 			return nil, r.err
 		}
 		if r.env.Type != protocol.TypeConnectResult || r.env.ID != id {
 			_ = stream.Close()
+			connLog.WithField("got_type", r.env.Type).Warn("unexpected connect_result")
 			return nil, fmt.Errorf("hub: unexpected connect_result")
 		}
 		if !r.env.OK {
@@ -94,8 +106,10 @@ func DialThroughDevice(
 			if msg == "" {
 				msg = "connect failed"
 			}
+			connLog.WithField("reason", msg).Warn("device rejected connect")
 			return nil, fmt.Errorf("hub: device: %s", msg)
 		}
+		connLog.Debug("connect established")
 		return stream, nil
 	}
 }

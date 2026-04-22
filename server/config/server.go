@@ -23,6 +23,19 @@ type Server struct {
 	SessionHeartbeatTimeout time.Duration `yaml:"session_heartbeat_timeout" json:"session_heartbeat_timeout"`
 	DeviceWaitTimeout       time.Duration `yaml:"device_wait_timeout" json:"device_wait_timeout"`
 	ConnectResultTimeout    time.Duration `yaml:"connect_result_timeout" json:"connect_result_timeout"`
+
+	// LogLevel is a logrus level: "trace", "debug", "info", "warn", "error". Default "info".
+	LogLevel string `yaml:"log_level" json:"log_level"`
+	// LogFormat is "text" (default) or "json".
+	LogFormat string `yaml:"log_format" json:"log_format"`
+	// DeviceLogFile routes the device-tunnel logger output. "" or "stdout" -> stdout,
+	// "stderr" -> stderr, anything else -> file path (append).
+	DeviceLogFile string `yaml:"device_log_file" json:"device_log_file"`
+	// SocksLogFile routes the SOCKS5 logger output. Same semantics as DeviceLogFile.
+	SocksLogFile string `yaml:"socks_log_file" json:"socks_log_file"`
+	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight goroutines
+	// (device sessions + SOCKS connections) before forcing exit. Default 10s.
+	ShutdownTimeout time.Duration `yaml:"shutdown_timeout" json:"shutdown_timeout"`
 }
 
 // LoadServer reads a server-only config file. Use .json for JSON; otherwise YAML is assumed.
@@ -58,6 +71,11 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		SessionHeartbeatTimeout json.RawMessage `json:"session_heartbeat_timeout"`
 		DeviceWaitTimeout       json.RawMessage `json:"device_wait_timeout"`
 		ConnectResultTimeout    json.RawMessage `json:"connect_result_timeout"`
+		LogLevel                string          `json:"log_level"`
+		LogFormat               string          `json:"log_format"`
+		DeviceLogFile           string          `json:"device_log_file"`
+		SocksLogFile            string          `json:"socks_log_file"`
+		ShutdownTimeout         json.RawMessage `json:"shutdown_timeout"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, err
@@ -68,6 +86,10 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		TLSCertFile:       wire.TLSCertFile,
 		TLSKeyFile:        wire.TLSKeyFile,
 		SocksAuthPassword: wire.SocksAuthPassword,
+		LogLevel:          wire.LogLevel,
+		LogFormat:         wire.LogFormat,
+		DeviceLogFile:     wire.DeviceLogFile,
+		SocksLogFile:      wire.SocksLogFile,
 	}
 	var err error
 	if s.SessionHeartbeatTimeout, err = parseJSONDurationField(wire.SessionHeartbeatTimeout, "session_heartbeat_timeout"); err != nil {
@@ -77,6 +99,9 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		return nil, err
 	}
 	if s.ConnectResultTimeout, err = parseJSONDurationField(wire.ConnectResultTimeout, "connect_result_timeout"); err != nil {
+		return nil, err
+	}
+	if s.ShutdownTimeout, err = parseJSONDurationField(wire.ShutdownTimeout, "shutdown_timeout"); err != nil {
 		return nil, err
 	}
 	return validateServer(s)
@@ -94,6 +119,9 @@ func validateServer(s *Server) (*Server, error) {
 	}
 	if s.ConnectResultTimeout == 0 {
 		s.ConnectResultTimeout = 30 * time.Second
+	}
+	if s.ShutdownTimeout == 0 {
+		s.ShutdownTimeout = 10 * time.Second
 	}
 	return s, nil
 }

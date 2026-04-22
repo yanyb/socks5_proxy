@@ -3,33 +3,54 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"flag"
-	"log"
 	"net"
-	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
+	"time"
+
 	"xsocks5/server/config"
 	"xsocks5/server/hub"
+	"xsocks5/server/logger"
 
+	"github.com/sirupsen/logrus"
 	"github.com/things-go/go-socks5"
 )
 
 func main() {
-	cfgPath := flag.String("config", "configs/server.yaml", "server-only config: .yaml or .json")
+	cfgPath := flag.String("config", "server/configs/server.yaml", "server-only config: .yaml or .json")
 	flag.Parse()
 
 	srvCfg, err := config.LoadServer(*cfgPath)
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		logrus.WithError(err).Fatal("load config")
 	}
+
+	deviceLog, closeDeviceLog, err := logger.Build(srvCfg.LogLevel, srvCfg.LogFormat, srvCfg.DeviceLogFile, "device")
+	if err != nil {
+		logrus.WithError(err).Fatal("init device logger")
+	}
+	defer closeDeviceLog()
+
+	socksLog, closeSocksLog, err := logger.Build(srvCfg.LogLevel, srvCfg.LogFormat, srvCfg.SocksLogFile, "socks")
+	if err != nil {
+		logrus.WithError(err).Fatal("init socks logger")
+	}
+	defer closeSocksLog()
+
+	bootLog := deviceLog.WithField("component", "boot")
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	reg := hub.NewRegistry()
 
 	cert, err := tls.LoadX509KeyPair(srvCfg.TLSCertFile, srvCfg.TLSKeyFile)
 	if err != nil {
-		log.Fatalf("tls: load cert: %v", err)
+		bootLog.WithError(err).Fatal("tls: load cert")
 	}
 	tlsConf := &tls.Config{
 		Certificates: []tls.Certificate{cert},
@@ -38,24 +59,41 @@ func main() {
 
 	devLn, err := tls.Listen("tcp", srvCfg.DeviceListen, tlsConf)
 	if err != nil {
-		log.Fatalf("device listen: %v", err)
+		bootLog.WithError(err).Fatal("device listen")
 	}
-	defer devLn.Close()
 
+	socksLn, err := net.Listen("tcp", srvCfg.SocksListen)
+	if err != nil {
+		_ = devLn.Close()
+		bootLog.WithError(err).Fatal("socks5 listen")
+	}
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
 	go func() {
-		logger := log.New(os.Stdout, "device: ", log.LstdFlags|log.Lmsgprefix)
+		defer wg.Done()
+		acceptLog := deviceLog.WithField("component", "device_listener")
 		for {
 			c, err := devLn.Accept()
 			if err != nil {
-				log.Printf("device accept: %v", err)
+				if errors.Is(err, net.ErrClosed) {
+					acceptLog.Debug("listener closed")
+					return
+				}
+				acceptLog.WithError(err).Warn("accept")
 				return
 			}
-			go hub.ServeDevice(c, reg, srvCfg.SessionHeartbeatTimeout, logger)
+			wg.Add(1)
+			go func(conn net.Conn) {
+				defer wg.Done()
+				hub.ServeDevice(conn, reg, srvCfg.SessionHeartbeatTimeout, deviceLog)
+			}(c)
 		}
 	}()
 
 	opts := []socks5.Option{
-		socks5.WithLogger(socks5.NewLogger(log.New(os.Stdout, "socks5: ", log.LstdFlags))),
+		socks5.WithLogger(socksLog),
 		socks5.WithDialAndRequest(func(ctx context.Context, network, addr string, req *socks5.Request) (net.Conn, error) {
 			user := socksUsername(req)
 			targetID, err := reg.ResolveDeviceForDial(user)
@@ -65,6 +103,7 @@ func main() {
 			return hub.DialThroughDevice(
 				ctx,
 				reg,
+				socksLog,
 				targetID,
 				srvCfg.DeviceWaitTimeout,
 				srvCfg.ConnectResultTimeout,
@@ -78,23 +117,61 @@ func main() {
 	}
 	s5 := socks5.NewServer(opts...)
 
+	socksDone := make(chan struct{})
 	go func() {
-		sig := make(chan os.Signal, 1)
-		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-		<-sig
-		_ = devLn.Close()
-		os.Exit(0)
+		defer close(socksDone)
+		if err := s5.Serve(socksLn); err != nil && !errors.Is(err, net.ErrClosed) {
+			bootLog.WithError(err).Error("socks5 serve")
+		}
 	}()
 
 	authHint := "noauth (only valid when exactly one device is online)"
 	if srvCfg.SocksAuthPassword != "" {
 		authHint = "user/pass (username = device_id)"
 	}
-	log.Printf("server: socks5=%s device_tls=%s socks_auth=%s online_devices=%v",
-		srvCfg.SocksListen, srvCfg.DeviceListen, authHint, reg.ListOnline())
+	bootLog.WithFields(logrus.Fields{
+		"socks5":           srvCfg.SocksListen,
+		"device_tls":       srvCfg.DeviceListen,
+		"socks_auth":       authHint,
+		"online_devices":   reg.ListOnline(),
+		"device_log_file":  orStdout(srvCfg.DeviceLogFile),
+		"socks_log_file":   orStdout(srvCfg.SocksLogFile),
+		"shutdown_timeout": srvCfg.ShutdownTimeout.String(),
+	}).Info("server started")
 
-	if err := s5.ListenAndServe("tcp", srvCfg.SocksListen); err != nil {
-		log.Fatalf("socks5: %v", err)
+	<-ctx.Done()
+	bootLog.Info("shutdown requested")
+	stop() // restore default handler so a second Ctrl-C terminates immediately
+
+	// 1) Stop accepting new work.
+	if err := devLn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		bootLog.WithError(err).Warn("close device listener")
+	}
+	if err := socksLn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		bootLog.WithError(err).Warn("close socks listener")
+	}
+
+	// 2) Tear down active device sessions; in-flight SOCKS streams unblock once
+	//    their underlying yamux session goes away.
+	reg.CloseAll()
+
+	// 3) Wait for goroutines (device accept loop + per-device + socks Serve).
+	doneAll := make(chan struct{})
+	go func() {
+		wg.Wait()
+		<-socksDone
+		close(doneAll)
+	}()
+
+	timeout := srvCfg.ShutdownTimeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	select {
+	case <-doneAll:
+		bootLog.Info("clean shutdown")
+	case <-time.After(timeout):
+		bootLog.WithField("timeout", timeout.String()).Warn("shutdown timed out, exiting")
 	}
 }
 
@@ -103,4 +180,11 @@ func socksUsername(req *socks5.Request) string {
 		return ""
 	}
 	return strings.TrimSpace(req.AuthContext.Payload["username"])
+}
+
+func orStdout(p string) string {
+	if strings.TrimSpace(p) == "" {
+		return "stdout"
+	}
+	return p
 }

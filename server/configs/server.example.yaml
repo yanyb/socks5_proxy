@@ -16,3 +16,13 @@ session_heartbeat_timeout: 90s
 device_wait_timeout: 30s
 # After CONNECT is sent to device, wait for connect_result (TCP dial on phone).
 connect_result_timeout: 30s
+# How long graceful shutdown waits for in-flight goroutines (devices + SOCKS connections).
+shutdown_timeout: 10s
+# Logging (logrus). Level: trace|debug|info|warn|error. Format: text|json.
+log_level: "info"
+log_format: "text"
+# Where each log stream is written. "" or "stdout" -> stdout; "stderr" -> stderr;
+# any other value is treated as a file path (opened in append mode).
+# Even when both go to the same destination, entries carry stream=device or stream=socks.
+device_log_file: ""   # device tunnel: register / heartbeat / accept / yamux
+socks_log_file:  ""   # SOCKS5 server: per-connection dial through device, socks5 lib errors
