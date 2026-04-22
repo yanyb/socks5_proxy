@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"my_socks5_proxy/internal/protocol"
+	"xsocks5/internal/protocol"
 )
 
 // DialThroughDevice opens a new yamux stream to the chosen device, performs connect handshake, and returns the stream for relay (implements net.Conn).

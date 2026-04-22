@@ -1,4 +1,4 @@
-module my_socks5_proxy
+module xsocks5
 
 go 1.25.0
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build my_socks5_proxy/mobile as an Android AAR (requires Android SDK + NDK, gomobile, gobind).
+# Build xsocks5/mobile as an Android AAR (requires Android SDK + NDK, gomobile, gobind).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"

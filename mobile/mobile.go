@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"my_socks5_proxy/internal/client"
-	"my_socks5_proxy/internal/config"
+	"xsocks5/internal/client"
+	"xsocks5/internal/config"
 )
 
 // HostResolver is implemented in Java/Kotlin. Use Android APIs such as InetAddress.getAllByName

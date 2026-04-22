@@ -10,9 +10,8 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-
-	"my_socks5_proxy/internal/config"
-	"my_socks5_proxy/internal/hub"
+	"xsocks5/internal/config"
+	"xsocks5/internal/hub"
 
 	"github.com/things-go/go-socks5"
 )

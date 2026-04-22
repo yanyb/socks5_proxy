@@ -8,8 +8,7 @@ import (
 	"net"
 	"sync"
 	"time"
-
-	"my_socks5_proxy/internal/protocol"
+	"xsocks5/internal/protocol"
 
 	"github.com/hashicorp/yamux"
 )
