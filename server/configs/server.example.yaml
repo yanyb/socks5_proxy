@@ -1,0 +1,18 @@
+# Server-only config. Copy to server.yaml and edit.
+# Field names match JSON you might serve from an admin API (see server/config ParseServerJSON).
+
+# SOCKS5 for users (browsers, apps pointing at this proxy)
+socks_listen: "127.0.0.1:1080"
+# Devices (phones) dial in with TLS; yamux runs on top.
+device_listen: "0.0.0.0:8443"
+tls_cert_file: "server/configs/server.crt"
+tls_key_file: "server/configs/server.key"
+# When non-empty, enables SOCKS5 user/password: username = device_id, password = this secret.
+# Required when more than one device is online. Empty = no-auth (only valid if exactly one device is connected).
+socks_auth_password: ""
+# Optional: drop device session if no app-level heartbeat within this duration (0 = disable).
+session_heartbeat_timeout: 90s
+# Wait for a device to register before failing SOCKS5 dial (0 = no wait).
+device_wait_timeout: 30s
+# After CONNECT is sent to device, wait for connect_result (TCP dial on phone).
+connect_result_timeout: 30s

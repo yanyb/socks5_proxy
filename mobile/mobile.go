@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"xsocks5/internal/client"
-	"xsocks5/internal/config"
+	"xsocks5/client/config"
+	"xsocks5/client/core"
 )
 
 // HostResolver is implemented in Java/Kotlin. Use Android APIs such as InetAddress.getAllByName
@@ -71,14 +71,14 @@ func Run(cfg *ClientConfig, resolver HostResolver) error {
 	}()
 
 	if resolver == nil {
-		return client.Run(ctx, c, stderrLog)
+		return core.Run(ctx, c, stderrLog)
 	}
-	return client.RunWithHostLookup(ctx, c, stderrLog, func(ctx context.Context, host string) ([]string, error) {
+	return core.RunWithHostLookup(ctx, c, stderrLog, func(ctx context.Context, host string) ([]string, error) {
 		s, err := resolver.LookupHost(host)
 		if err != nil {
 			return nil, err
 		}
-		return client.ParseAddrsFromLookupString(s), nil
+		return core.ParseAddrsFromLookupString(s), nil
 	})
 }
 

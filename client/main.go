@@ -7,12 +7,12 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"xsocks5/internal/client"
-	"xsocks5/internal/config"
+	"xsocks5/client/config"
+	"xsocks5/client/core"
 )
 
 func main() {
-	cfgPath := flag.String("config", "configs/client.yaml", "device config file: .yaml or .json (JSON matches API / ParseClientJSON)")
+	cfgPath := flag.String("config", "client/configs/client.yaml", "device config file: .yaml or .json (JSON matches API / ParseClientJSON)")
 	flag.Parse()
 
 	cfg, err := config.LoadClient(*cfgPath)
@@ -24,7 +24,7 @@ func main() {
 	defer stop()
 
 	logger := log.New(os.Stdout, "client: ", log.LstdFlags)
-	if err := client.Run(ctx, cfg, logger); err != nil && err != context.Canceled {
+	if err := core.Run(ctx, cfg, logger); err != nil && err != context.Canceled {
 		log.Fatalf("client: %v", err)
 	}
 }

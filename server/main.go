@@ -10,14 +10,14 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
-	"xsocks5/internal/config"
-	"xsocks5/internal/hub"
+	"xsocks5/server/config"
+	"xsocks5/server/hub"
 
 	"github.com/things-go/go-socks5"
 )
 
 func main() {
-	cfgPath := flag.String("config", "configs/server.yaml", "server-only config: .yaml or .json")
+	cfgPath := flag.String("config", "server/configs/server.yaml", "server-only config: .yaml or .json")
 	flag.Parse()
 
 	srvCfg, err := config.LoadServer(*cfgPath)

@@ -4,12 +4,16 @@ SOCKS5 proxy on the cloud, **egress through a phone (or any device)** over **TLS
 
 ## Layout
 
-- `server/` — listens for SOCKS5 users and for device connections (TLS, then yamux).
-- `client/` — runs on the device: registers, heartbeats, dials targets when the server opens streams.
-- `configs/server.example.yaml` — server-only settings; copy to `configs/server.yaml`.
-- `configs/client.example.yaml` / `configs/client.example.json` — device-only settings (YAML or JSON); copy to `configs/client.yaml` or use `.json` after API download.
+- `server/` — listens for SOCKS5 users and for device connections (TLS, then yamux). Subpackages: `server/hub`, `server/config`, `server/configs`.
+- `client/` — runs on the device: registers, heartbeats, dials targets when the server opens streams. Subpackages: `client/core`, `client/config`, `client/configs`.
+- `mobile/` — gomobile bind target (Android AAR) that reuses `client/core`.
+- `protocol/` — wire protocol shared by server and client (newline-delimited JSON envelopes).
+- `admin/` — admin/control plane (IP whitelist, auth, quotas — WIP).
+- `third_party/` — local forks of `go-socks5` and `yamux` referenced by `go.mod` via `replace`.
+- `server/configs/server.example.yaml` — server-only settings; copy to `server/configs/server.yaml`.
+- `client/configs/client.example.yaml` — device-only settings (YAML or JSON); copy to `client/configs/client.yaml` or use `.json` after API download.
 
-Server and client configs are **separate files**. Device-side fields are tagged for **JSON** (`internal/config.Client`) so you can:
+Server and client configs are **separate files**. Device-side fields are tagged for **JSON** (`client/config.Client`) so you can:
 
 - Save an API response to a file and run `go run ./client -config /path/to/device.json` (extension **`.json`** selects JSON parsing).
 - Or call `config.ParseClientJSON(body)` in your own bootstrap code.
@@ -20,21 +24,21 @@ Server and client configs are **separate files**. Device-side fields are tagged 
 
 ```bash
 cd /path/to/my_socks5_proxy
-cp configs/server.example.yaml configs/server.yaml
-cp configs/client.example.yaml configs/client.yaml
-openssl req -x509 -newkey rsa:2048 -keyout configs/server.key -out configs/server.crt -days 365 -nodes -subj "/CN=localhost"
+cp server/configs/server.example.yaml server/configs/server.yaml
+cp client/configs/client.example.yaml client/configs/client.yaml
+openssl req -x509 -newkey rsa:2048 -keyout server/configs/server.key -out server/configs/server.crt -days 365 -nodes -subj "/CN=localhost"
 ```
 
 2. Start the server (two listeners: SOCKS5 + device TLS):
 
 ```bash
-go run ./server -config configs/server.yaml
+go run ./server -config server/configs/server.yaml
 ```
 
 3. Start the client (device):
 
 ```bash
-go run ./client -config configs/client.yaml
+go run ./client -config client/configs/client.yaml
 ```
 
 4. Point a SOCKS5 client at `127.0.0.1:1080`. With no `socks_auth_password` and **only one** phone online, that phone is used; with multiple phones, set `socks_auth_password` and use SOCKS username = `device_id`.
@@ -53,7 +57,7 @@ Without `socks_auth_password`, SOCKS5 has no username field — routing works on
 
 ## Protocol (application framing)
 
-On each yamux stream, the first lines are **newline-delimited JSON** (`internal/protocol`):
+On each yamux stream, the first lines are **newline-delimited JSON** (`protocol`):
 
 - Control stream (opened first by the device): `register` → `register_ack`, then periodic `heartbeat` / `heartbeat_ack`.
 - CONNECT streams (opened by the server): `connect` → `connect_result`, then raw TCP relay.
