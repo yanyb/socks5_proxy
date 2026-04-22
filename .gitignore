@@ -4,3 +4,4 @@ configs/server.yaml
 configs/client.yaml
 .idea/
 ./mobile/build/
+./mobile/.DS_Store
