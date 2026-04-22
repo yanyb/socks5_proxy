@@ -3,5 +3,6 @@ server/configs/server.key
 server/configs/server.yaml
 client/configs/client.yaml
 .idea/
-./mobile/build/
-./mobile/.DS_Store
+mobile/build
+mobile/.DS_Store
+mobile/.DS_Store

@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	cfgPath := flag.String("config", "client/configs/client.yaml", "device config file: .yaml or .json (JSON matches API / ParseClientJSON)")
+	cfgPath := flag.String("config", "configs/client.yaml", "device config file: .yaml or .json (JSON matches API / ParseClientJSON)")
 	flag.Parse()
 
 	cfg, err := config.LoadClient(*cfgPath)

@@ -17,7 +17,7 @@ import (
 )
 
 func main() {
-	cfgPath := flag.String("config", "server/configs/server.yaml", "server-only config: .yaml or .json")
+	cfgPath := flag.String("config", "configs/server.yaml", "server-only config: .yaml or .json")
 	flag.Parse()
 
 	srvCfg, err := config.LoadServer(*cfgPath)
