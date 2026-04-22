@@ -3,3 +3,4 @@ configs/server.key
 configs/server.yaml
 configs/client.yaml
 .idea/
+./mobile/build/

@@ -8,13 +8,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"my_socks5_proxy/internal/config"
+	"my_socks5_proxy/internal/protocol"
 	"net"
 	"strings"
 	"sync"
 	"time"
-
-	"my_socks5_proxy/internal/config"
-	"my_socks5_proxy/internal/protocol"
 
 	"github.com/hashicorp/yamux"
 )
