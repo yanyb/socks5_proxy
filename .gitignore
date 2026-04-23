@@ -1,6 +1,7 @@
 /bin/
 server/configs/server.key
 server/configs/server.yaml
+server/configs/credentials.json
 client/configs/client.yaml
 .idea/
 mobile/build

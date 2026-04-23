@@ -7,9 +7,16 @@ socks_listen: "127.0.0.1:1080"
 device_listen: "0.0.0.0:8443"
 tls_cert_file: "server/configs/server.crt"
 tls_key_file: "server/configs/server.key"
-# When non-empty, enables SOCKS5 user/password: username = device_id, password = this secret.
-# Required when more than one device is online. Empty = no-auth (only valid if exactly one device is connected).
+# SOCKS5 credentials precedence:
+#   1. If socks_credentials_file is set, the server loads {user: password} pairs from
+#      that JSON file at startup, refreshes the cache every socks_credentials_refresh,
+#      and uses it for SOCKS5 auth. (Future: replace with admin-service URL.)
+#   2. Else if socks_auth_password is set, all users share this single password,
+#      username = device_id.
+#   3. Else no auth (only valid if exactly one device is connected).
 socks_auth_password: ""
+socks_credentials_file: ""        # e.g. "server/configs/credentials.json"
+socks_credentials_refresh: 1m
 # Optional: drop device session if no app-level heartbeat within this duration (0 = disable).
 session_heartbeat_timeout: 90s
 # Wait for a device to register before failing SOCKS5 dial (0 = no wait).

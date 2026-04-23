@@ -18,8 +18,17 @@ type Server struct {
 	DeviceListen string `yaml:"device_listen" json:"device_listen"`
 	TLSCertFile  string `yaml:"tls_cert_file" json:"tls_cert_file"`
 	TLSKeyFile   string `yaml:"tls_key_file" json:"tls_key_file"`
-	// SocksAuthPassword enables RFC SOCKS5 user/pass auth. Username must be the target device_id; password is this shared secret. Recommended when multiple phones are online.
-	SocksAuthPassword       string        `yaml:"socks_auth_password" json:"socks_auth_password"`
+	// SocksAuthPassword enables RFC SOCKS5 user/pass auth with a single shared secret.
+	// Username must be the target device_id; password is this secret. Used as a fallback
+	// when SocksCredentialsFile is empty.
+	SocksAuthPassword string `yaml:"socks_auth_password" json:"socks_auth_password"`
+	// SocksCredentialsFile is the JSON file holding {"username": "password", ...}
+	// pairs. When set, it overrides SocksAuthPassword and is used to back a
+	// refreshing credentials cache (see SocksCredentialsRefresh).
+	// Future: replace this with an admin-service URL.
+	SocksCredentialsFile string `yaml:"socks_credentials_file" json:"socks_credentials_file"`
+	// SocksCredentialsRefresh is the cache reload period. Default 1m.
+	SocksCredentialsRefresh time.Duration `yaml:"socks_credentials_refresh" json:"socks_credentials_refresh"`
 	SessionHeartbeatTimeout time.Duration `yaml:"session_heartbeat_timeout" json:"session_heartbeat_timeout"`
 	DeviceWaitTimeout       time.Duration `yaml:"device_wait_timeout" json:"device_wait_timeout"`
 	ConnectResultTimeout    time.Duration `yaml:"connect_result_timeout" json:"connect_result_timeout"`
@@ -76,6 +85,8 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		DeviceLogFile           string          `json:"device_log_file"`
 		SocksLogFile            string          `json:"socks_log_file"`
 		ShutdownTimeout         json.RawMessage `json:"shutdown_timeout"`
+		SocksCredentialsFile    string          `json:"socks_credentials_file"`
+		SocksCredentialsRefresh json.RawMessage `json:"socks_credentials_refresh"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, err
@@ -85,11 +96,12 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		DeviceListen:      wire.DeviceListen,
 		TLSCertFile:       wire.TLSCertFile,
 		TLSKeyFile:        wire.TLSKeyFile,
-		SocksAuthPassword: wire.SocksAuthPassword,
-		LogLevel:          wire.LogLevel,
-		LogFormat:         wire.LogFormat,
-		DeviceLogFile:     wire.DeviceLogFile,
-		SocksLogFile:      wire.SocksLogFile,
+		SocksAuthPassword:    wire.SocksAuthPassword,
+		LogLevel:             wire.LogLevel,
+		LogFormat:            wire.LogFormat,
+		DeviceLogFile:        wire.DeviceLogFile,
+		SocksLogFile:         wire.SocksLogFile,
+		SocksCredentialsFile: wire.SocksCredentialsFile,
 	}
 	var err error
 	if s.SessionHeartbeatTimeout, err = parseJSONDurationField(wire.SessionHeartbeatTimeout, "session_heartbeat_timeout"); err != nil {
@@ -102,6 +114,9 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		return nil, err
 	}
 	if s.ShutdownTimeout, err = parseJSONDurationField(wire.ShutdownTimeout, "shutdown_timeout"); err != nil {
+		return nil, err
+	}
+	if s.SocksCredentialsRefresh, err = parseJSONDurationField(wire.SocksCredentialsRefresh, "socks_credentials_refresh"); err != nil {
 		return nil, err
 	}
 	return validateServer(s)
@@ -122,6 +137,9 @@ func validateServer(s *Server) (*Server, error) {
 	}
 	if s.ShutdownTimeout == 0 {
 		s.ShutdownTimeout = 10 * time.Second
+	}
+	if s.SocksCredentialsRefresh == 0 {
+		s.SocksCredentialsRefresh = time.Minute
 	}
 	return s, nil
 }

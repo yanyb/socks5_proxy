@@ -112,8 +112,9 @@ func main() {
 			)
 		}),
 	}
-	if srvCfg.SocksAuthPassword != "" {
-		opts = append(opts, socks5.WithCredential(&hub.SOCKSPlainAuth{Password: srvCfg.SocksAuthPassword}))
+	authHint, err := configureSocksAuth(ctx, srvCfg, socksLog, &opts)
+	if err != nil {
+		bootLog.WithError(err).Fatal("init socks credentials")
 	}
 	s5 := socks5.NewServer(opts...)
 
@@ -125,10 +126,6 @@ func main() {
 		}
 	}()
 
-	authHint := "noauth (only valid when exactly one device is online)"
-	if srvCfg.SocksAuthPassword != "" {
-		authHint = "user/pass (username = device_id)"
-	}
 	bootLog.WithFields(logrus.Fields{
 		"socks5":           srvCfg.SocksListen,
 		"device_tls":       srvCfg.DeviceListen,
@@ -173,6 +170,29 @@ func main() {
 	case <-time.After(timeout):
 		bootLog.WithField("timeout", timeout.String()).Warn("shutdown timed out, exiting")
 	}
+}
+
+// configureSocksAuth wires the SOCKS5 credential store. Precedence:
+//  1. socks_credentials_file -> file-backed CredentialCache (eager preload + 1m refresh).
+//  2. socks_auth_password    -> single shared secret (legacy).
+//  3. neither                -> no auth (only valid when exactly one device is online).
+//
+// Returns a short human description for the boot banner.
+func configureSocksAuth(ctx context.Context, cfg *config.Server, log *logrus.Logger, opts *[]socks5.Option) (string, error) {
+	if path := strings.TrimSpace(cfg.SocksCredentialsFile); path != "" {
+		src := &hub.JSONFileCredentialSource{Path: path}
+		cache := hub.NewCredentialCache(src, cfg.SocksCredentialsRefresh, log)
+		if err := cache.Start(ctx); err != nil {
+			return "", err
+		}
+		*opts = append(*opts, socks5.WithCredential(cache))
+		return "user/pass (cache from " + path + ", refresh " + cfg.SocksCredentialsRefresh.String() + ")", nil
+	}
+	if cfg.SocksAuthPassword != "" {
+		*opts = append(*opts, socks5.WithCredential(&hub.SOCKSPlainAuth{Password: cfg.SocksAuthPassword}))
+		return "user/pass (shared secret, username = device_id)", nil
+	}
+	return "noauth (only valid when exactly one device is online)", nil
 }
 
 func socksUsername(req *socks5.Request) string {
