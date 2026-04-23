@@ -6,9 +6,7 @@ import (
 	"errors"
 	"flag"
 	"net"
-	"net/http"
 	"os/signal"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,6 +14,7 @@ import (
 	"xsocks5/server/config"
 	"xsocks5/server/hub"
 	"xsocks5/server/logger"
+	"xsocks5/server/sockssetup"
 
 	"github.com/sirupsen/logrus"
 	"github.com/things-go/go-socks5"
@@ -93,7 +92,7 @@ func main() {
 		}
 	}()
 
-	socksRule, err := buildSocksRuleSet(ctx, srvCfg, socksLog)
+	socksRule, err := sockssetup.BuildSocksRuleSet(ctx, srvCfg, socksLog)
 	if err != nil {
 		bootLog.WithError(err).Fatal("init socks5 rule set (IP whitelist)")
 	}
@@ -101,7 +100,7 @@ func main() {
 		socks5.WithLogger(socksLog),
 		socks5.WithRule(socksRule),
 		socks5.WithDialAndRequest(func(ctx context.Context, network, addr string, req *socks5.Request) (net.Conn, error) {
-			user := socksUsername(req)
+			user := hub.SOCKS5Username(req)
 			targetID, err := reg.ResolveDeviceForDial(user)
 			if err != nil {
 				return nil, err
@@ -118,7 +117,7 @@ func main() {
 			)
 		}),
 	}
-	authHint, err := configureSocksAuth(ctx, srvCfg, socksLog, &opts)
+	authHint, err := sockssetup.ConfigureSocksAuth(ctx, srvCfg, socksLog, &opts)
 	if err != nil {
 		bootLog.WithError(err).Fatal("init socks credentials")
 	}
@@ -136,10 +135,10 @@ func main() {
 		"socks5":             srvCfg.SocksListen,
 		"device_tls":         srvCfg.DeviceListen,
 		"socks_auth":         authHint,
-		"socks_ip_whitelist": socksIPWhitelistHint(srvCfg),
+		"socks_ip_whitelist": sockssetup.SocksIPWhitelistSummary(srvCfg),
 		"online_devices":     reg.ListOnline(),
-		"device_log_file":    orStdout(srvCfg.DeviceLogFile),
-		"socks_log_file":     orStdout(srvCfg.SocksLogFile),
+		"device_log_file":    srvCfg.DeviceLogFile,
+		"socks_log_file":     srvCfg.SocksLogFile,
 		"shutdown_timeout":   srvCfg.ShutdownTimeout.String(),
 	}).Info("server started")
 
@@ -177,80 +176,4 @@ func main() {
 	case <-time.After(timeout):
 		bootLog.WithField("timeout", timeout.String()).Warn("shutdown timed out, exiting")
 	}
-}
-
-// buildSocksRuleSet returns a socks5 RuleSet. When socks_ip_whitelist_url or
-// socks_ip_whitelist_file is set, a cached IP allowlist (default refresh 1m) is
-// applied before the usual command permit (CONNECT only). If both are set, URL
-// is used. No IP key in config => no source => base PermitCommand only.
-func buildSocksRuleSet(ctx context.Context, cfg *config.Server, log *logrus.Logger) (socks5.RuleSet, error) {
-	inner := socks5.RuleSet(&socks5.PermitCommand{
-		EnableConnect: true, EnableBind: false, EnableAssociate: false,
-	})
-	refresh := cfg.SocksIPWhitelistRefresh
-
-	if u := strings.TrimSpace(cfg.SocksIPWhitelistURL); u != "" {
-		src := &hub.URLJSONIPWhitelistSource{URL: u, Client: &http.Client{Timeout: 30 * time.Second}}
-		c := hub.NewIPWhitelistCache(src, refresh, log)
-		if err := c.Start(ctx); err != nil {
-			return nil, err
-		}
-		return hub.NewIPRuleSet(c, inner, log), nil
-	}
-	if p := strings.TrimSpace(cfg.SocksIPWhitelistFile); p != "" {
-		src := &hub.JSONFileIPWhitelistSource{Path: p}
-		c := hub.NewIPWhitelistCache(src, refresh, log)
-		if err := c.Start(ctx); err != nil {
-			return nil, err
-		}
-		return hub.NewIPRuleSet(c, inner, log), nil
-	}
-	return inner, nil
-}
-
-func socksIPWhitelistHint(cfg *config.Server) string {
-	if u := strings.TrimSpace(cfg.SocksIPWhitelistURL); u != "" {
-		return "url (refresh " + cfg.SocksIPWhitelistRefresh.String() + "): " + u
-	}
-	if p := strings.TrimSpace(cfg.SocksIPWhitelistFile); p != "" {
-		return "file (refresh " + cfg.SocksIPWhitelistRefresh.String() + "): " + p
-	}
-	return "off"
-}
-
-// configureSocksAuth wires the SOCKS5 credential store. Precedence:
-//  1. socks_credentials_file -> file-backed CredentialCache (eager preload + 1m refresh).
-//  2. socks_auth_password    -> single shared secret (legacy).
-//  3. neither                -> no auth (only valid when exactly one device is online).
-//
-// Returns a short human description for the boot banner.
-func configureSocksAuth(ctx context.Context, cfg *config.Server, log *logrus.Logger, opts *[]socks5.Option) (string, error) {
-	if path := strings.TrimSpace(cfg.SocksCredentialsFile); path != "" {
-		src := &hub.JSONFileCredentialSource{Path: path}
-		cache := hub.NewCredentialCache(src, cfg.SocksCredentialsRefresh, log)
-		if err := cache.Start(ctx); err != nil {
-			return "", err
-		}
-		*opts = append(*opts, socks5.WithCredential(cache))
-		return "user/pass (cache from " + path + ", refresh " + cfg.SocksCredentialsRefresh.String() + ")", nil
-	}
-	if cfg.SocksAuthPassword != "" {
-		*opts = append(*opts, socks5.WithCredential(&hub.SOCKSPlainAuth{Password: cfg.SocksAuthPassword}))
-		return "user/pass (shared secret, username = device_id)", nil
-	}
-	return "noauth (only valid when exactly one device is online)", nil
-}
-
-func socksUsername(req *socks5.Request) string {
-	if req == nil || req.AuthContext == nil || req.AuthContext.Payload == nil {
-		return ""
-	}
-	return strings.TrimSpace(req.AuthContext.Payload["username"])
-}
-
-func orStdout(p string) string {
-	if strings.TrimSpace(p) == "" {
-		return "stdout"
-	}
-	return p
 }

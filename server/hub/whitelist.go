@@ -112,7 +112,10 @@ func (c *IPWhitelistCache) Allows(client net.IP) bool {
 }
 
 func (c *IPWhitelistCache) refreshLoop(ctx context.Context) {
-	log := c.logger.WithField("component", "ip_whitelist")
+	var log *logrus.Entry
+	if c.logger != nil {
+		log = c.logger.WithField("component", "ip_whitelist")
+	}
 	t := time.NewTicker(c.refreshInterval)
 	defer t.Stop()
 	for {

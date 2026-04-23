@@ -35,7 +35,7 @@ shutdown_timeout: 10s
 log_level: "info"
 log_format: "text"
 # Where each log stream is written. "" or "stdout" -> stdout; "stderr" -> stderr;
-# any other value is treated as a file path (opened in append mode).
+# else a file path: writes use lumberjack (size rotation, gzip of old files; see server/logger).
 # Even when both go to the same destination, entries carry stream=device or stream=socks.
 device_log_file: ""   # device tunnel: register / heartbeat / accept / yamux
 socks_log_file:  ""   # SOCKS5 server: per-connection dial through device, socks5 lib errors

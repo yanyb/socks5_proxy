@@ -43,7 +43,7 @@ type Server struct {
 	// LogFormat is "text" (default) or "json".
 	LogFormat string `yaml:"log_format" json:"log_format"`
 	// DeviceLogFile routes the device-tunnel logger output. "" or "stdout" -> stdout,
-	// "stderr" -> stderr, anything else -> file path (append).
+	// "stderr" -> stderr, else a file path (size-rotated + archived via lumberjack; see server/logger).
 	DeviceLogFile string `yaml:"device_log_file" json:"device_log_file"`
 	// SocksLogFile routes the SOCKS5 logger output. Same semantics as DeviceLogFile.
 	SocksLogFile string `yaml:"socks_log_file" json:"socks_log_file"`

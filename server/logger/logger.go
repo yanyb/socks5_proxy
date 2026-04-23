@@ -2,13 +2,13 @@
 package logger
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/sirupsen/logrus"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // New builds a configured logrus logger writing to the given output.
@@ -41,10 +41,19 @@ func New(level, format string, out io.Writer) *logrus.Logger {
 	return l
 }
 
+// File rotation (used when Open writes to a file path) via lumberjack: size-based
+// rotate, old files kept, optional gzip. Tune here if you need different retention.
+const (
+	logFileMaxSizeMB  = 1024 // rotate when current file reaches this many MiB
+	logFileMaxBackups = 5    // number of rolled files to keep (0 = keep all, subject to MaxAge)
+	logFileMaxAgeDays = 3    // 0 = do not delete by age; otherwise days to retain
+	logFileCompress   = true // gzip rotated files (.gz)
+)
+
 // Open returns an io.Writer for a log destination string and a closer to call on shutdown.
 //   - "" or "stdout"  -> os.Stdout
 //   - "stderr"        -> os.Stderr
-//   - any other value -> opened as a file (O_APPEND|O_CREATE|O_WRONLY, 0o644)
+//   - any other value -> lumberjack rotating writer (size roll + keep backups, gzip on rotate)
 //
 // The returned closer is always safe to call (no-op for stdout/stderr).
 func Open(path string) (io.Writer, func() error, error) {
@@ -54,11 +63,19 @@ func Open(path string) (io.Writer, func() error, error) {
 	case "stderr":
 		return os.Stderr, func() error { return nil }, nil
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open log file %q: %w", path, err)
+	trim := strings.TrimSpace(path)
+	if trim == "" {
+		return os.Stdout, func() error { return nil }, nil
 	}
-	return f, f.Close, nil
+	lj := &lumberjack.Logger{
+		Filename:   trim,
+		MaxSize:    logFileMaxSizeMB,
+		MaxBackups: logFileMaxBackups,
+		MaxAge:     logFileMaxAgeDays,
+		LocalTime:  true,
+		Compress:   logFileCompress,
+	}
+	return lj, lj.Close, nil
 }
 
 // Discard returns an io.Writer that drops all input (useful when silencing legacy loggers).
