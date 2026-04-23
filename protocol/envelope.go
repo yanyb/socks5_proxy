@@ -8,16 +8,29 @@ import (
 )
 
 // Envelope is one JSON object per line (NDJSON) on control and connect handshakes.
+//
+// Heartbeat fields:
+//   - CurTs: client wall clock at send time (unix epoch ms). The server echoes
+//     it back unchanged so the client can compute RTT.
+//   - AvgRTT/LossRate: optional metrics from the client's 5-sample window.
+//     Zero means "not enough samples yet"; we use omitempty + pointers so a
+//     legitimate avg_rtt=0 / loss_rate=0 is still transmitted once available.
+//   - NetType: e.g. "wifi", "5g", "4g", "ethernet".
 type Envelope struct {
 	Type     string `json:"type"`
 	ID       string `json:"id,omitempty"`
 	DeviceID string `json:"device_id,omitempty"`
-	Token    string `json:"token,omitempty"`
 	OK       bool   `json:"ok,omitempty"`
 	Message  string `json:"message,omitempty"`
 	Network  string `json:"network,omitempty"`
 	Address  string `json:"address,omitempty"`
 	Ts       int64  `json:"ts,omitempty"`
+
+	// Heartbeat metrics (cur_ts in ms; avg_rtt in ms).
+	CurTs    int64    `json:"cur_ts,omitempty"`
+	AvgRTT   *int64   `json:"avg_rtt,omitempty"`
+	NetType  string   `json:"net_type,omitempty"`
+	LossRate *float64 `json:"loss_rate,omitempty"`
 }
 
 const (

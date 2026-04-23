@@ -2,7 +2,6 @@
 # Same fields can be returned as JSON from your control plane (see client/config ParseClientJSON).
 
 device_id: "phone-1"
-token: ""
 server_addr: "127.0.0.1:8443"
 heartbeat_interval: 30s
 # After disconnect or connect failure: exponential backoff, capped (defaults 1s → 60s).

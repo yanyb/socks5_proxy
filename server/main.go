@@ -6,19 +6,52 @@ import (
 	"errors"
 	"flag"
 	"net"
+	"os"
 	"os/signal"
 	"sync"
 	"syscall"
 	"time"
 
+	"xsocks5/protocol/heartbeat"
 	"xsocks5/server/config"
+	"xsocks5/server/geo"
 	"xsocks5/server/hub"
 	"xsocks5/server/logger"
+	"xsocks5/server/nsqpub"
 	"xsocks5/server/sockssetup"
 
 	"github.com/sirupsen/logrus"
 	"github.com/things-go/go-socks5"
 )
+
+// heartbeatSink fans a hub.HeartbeatRecord into geo lookup + NSQ publish.
+// Built once in main and shared by every device session. Logs and swallows
+// errors so device handlers stay decoupled from downstream health.
+type heartbeatSink struct {
+	geo geo.Lookuper
+	pub nsqpub.Publisher
+}
+
+func (s *heartbeatSink) OnHeartbeat(ctx context.Context, r hub.HeartbeatRecord) error {
+	evt := heartbeat.Event{
+		DeviceID:     r.DeviceID,
+		RemoteIP:     r.RemoteIP,
+		NetType:      r.NetType,
+		CurTsMs:      r.CurTsMs,
+		ServerRecvMs: r.ServerRecvMs,
+		AvgRTTms:     r.AvgRTTms,
+		LossRate:     r.LossRate,
+	}
+	if r.RemoteIP != "" && s.geo != nil {
+		if ip := net.ParseIP(r.RemoteIP); ip != nil {
+			evt.Geo = s.geo.Lookup(ip)
+		}
+	}
+	if s.pub == nil {
+		return nil
+	}
+	return s.pub.Publish(ctx, evt)
+}
 
 func main() {
 	cfgPath := flag.String("config", "configs/server.yaml", "server-only config: .yaml or .json")
@@ -45,6 +78,32 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// GeoIP DB: empty path => no enrichment (NopLookuper); SIGHUP reloads.
+	var geoLookuper geo.Lookuper = geo.NopLookuper
+	var geoDB *geo.GeoLite2
+	if srvCfg.GeoIPDBPath != "" {
+		g, err := geo.Open(srvCfg.GeoIPDBPath)
+		if err != nil {
+			bootLog.WithError(err).Fatal("geoip: open")
+		}
+		geoDB = g
+		geoLookuper = g
+		defer g.Close()
+		go watchSIGHUP(ctx, geoDB, deviceLog.WithField("component", "geoip"))
+	}
+
+	// NSQ publisher: empty addr => no-op.
+	var pub nsqpub.Publisher = nsqpub.NopPublisher{}
+	if srvCfg.NSQdTCPAddr != "" {
+		p, err := nsqpub.New(srvCfg.NSQdTCPAddr, srvCfg.HeartbeatTopic, deviceLog)
+		if err != nil {
+			bootLog.WithError(err).Fatal("nsqpub: connect")
+		}
+		pub = p
+		defer p.Close()
+	}
+	hbSink := &heartbeatSink{geo: geoLookuper, pub: pub}
 
 	reg := hub.NewRegistry()
 
@@ -87,7 +146,7 @@ func main() {
 			wg.Add(1)
 			go func(conn net.Conn) {
 				defer wg.Done()
-				hub.ServeDevice(conn, reg, srvCfg.SessionHeartbeatTimeout, deviceLog)
+				hub.ServeDevice(conn, reg, srvCfg.SessionHeartbeatTimeout, deviceLog, hbSink)
 			}(c)
 		}
 	}()
@@ -140,6 +199,9 @@ func main() {
 		"device_log_file":    srvCfg.DeviceLogFile,
 		"socks_log_file":     srvCfg.SocksLogFile,
 		"shutdown_timeout":   srvCfg.ShutdownTimeout.String(),
+		"geoip_db":           srvCfg.GeoIPDBPath,
+		"nsqd":               srvCfg.NSQdTCPAddr,
+		"heartbeat_topic":    nonEmpty(srvCfg.HeartbeatTopic, heartbeat.Topic),
 	}).Info("server started")
 
 	<-ctx.Done()
@@ -176,4 +238,33 @@ func main() {
 	case <-time.After(timeout):
 		bootLog.WithField("timeout", timeout.String()).Warn("shutdown timed out, exiting")
 	}
+}
+
+// watchSIGHUP triggers a hot reload of the GeoLite2 DB on SIGHUP. Returns when
+// ctx is canceled. Drop a fresh .mmdb in place and `kill -HUP $(pidof xsocks5)`
+// to refresh without a restart.
+func watchSIGHUP(ctx context.Context, db *geo.GeoLite2, log *logrus.Entry) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, syscall.SIGHUP)
+	defer signal.Stop(c)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-c:
+			log.WithField("path", db.Path()).Info("SIGHUP: reloading geoip db")
+			if err := db.Reload(); err != nil {
+				log.WithError(err).Error("geoip reload failed; keeping previous DB")
+				continue
+			}
+			log.Info("geoip db reloaded")
+		}
+	}
+}
+
+func nonEmpty(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }

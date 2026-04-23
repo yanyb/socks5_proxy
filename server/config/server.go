@@ -50,6 +50,20 @@ type Server struct {
 	// ShutdownTimeout bounds how long graceful shutdown waits for in-flight goroutines
 	// (device sessions + SOCKS connections) before forcing exit. Default 10s.
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout" json:"shutdown_timeout"`
+
+	// GeoIPDBPath is the GeoLite2-City MMDB file the server uses to enrich
+	// heartbeat events with country/region. Empty disables geo enrichment
+	// (NSQ events still publish, just with empty geo fields). On SIGHUP the
+	// file is reopened, so ops can drop a fresh DB in place without restart.
+	GeoIPDBPath string `yaml:"geoip_db_path" json:"geoip_db_path"`
+
+	// NSQdTCPAddr is the local nsqd this server publishes to (e.g. "127.0.0.1:4150").
+	// Empty disables NSQ publishing entirely (heartbeat handler runs as before).
+	// Producers connect to a single nsqd by NSQ design; consumers discover via
+	// nsqlookupd (configured on the admin side).
+	NSQdTCPAddr string `yaml:"nsqd_tcp_addr" json:"nsqd_tcp_addr"`
+	// HeartbeatTopic is the NSQ topic for heartbeat events. Default "device.heartbeat".
+	HeartbeatTopic string `yaml:"heartbeat_topic" json:"heartbeat_topic"`
 }
 
 // LoadServer reads a server-only config file. Use .json for JSON; otherwise YAML is assumed.
@@ -95,6 +109,9 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		SocksIPWhitelistFile    string          `json:"socks_ip_whitelist_file"`
 		SocksIPWhitelistURL     string          `json:"socks_ip_whitelist_url"`
 		SocksIPWhitelistRefresh json.RawMessage `json:"socks_ip_whitelist_refresh"`
+		GeoIPDBPath             string          `json:"geoip_db_path"`
+		NSQdTCPAddr             string          `json:"nsqd_tcp_addr"`
+		HeartbeatTopic          string          `json:"heartbeat_topic"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, err
@@ -112,6 +129,9 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		SocksCredentialsFile: wire.SocksCredentialsFile,
 		SocksIPWhitelistFile: wire.SocksIPWhitelistFile,
 		SocksIPWhitelistURL:  wire.SocksIPWhitelistURL,
+		GeoIPDBPath:          wire.GeoIPDBPath,
+		NSQdTCPAddr:          wire.NSQdTCPAddr,
+		HeartbeatTopic:       wire.HeartbeatTopic,
 	}
 	var err error
 	if s.SessionHeartbeatTimeout, err = parseJSONDurationField(wire.SessionHeartbeatTimeout, "session_heartbeat_timeout"); err != nil {

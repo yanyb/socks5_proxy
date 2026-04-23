@@ -111,7 +111,6 @@ func runSession(ctx context.Context, cfg *config.Client, tlsCfg *tls.Config, log
 	if err := protocol.WriteLine(ctrl, &protocol.Envelope{
 		Type:     protocol.TypeRegister,
 		DeviceID: cfg.DeviceID,
-		Token:    cfg.Token,
 	}); err != nil {
 		return err
 	}
@@ -134,7 +133,7 @@ func runSession(ctx context.Context, cfg *config.Client, tlsCfg *tls.Config, log
 	defer cancel()
 
 	go func() {
-		err := heartbeatLoop(sessCtx, ctrl, br, cfg.HeartbeatInterval, logger)
+		err := heartbeatLoop(sessCtx, ctrl, br, cfg, logger)
 		if err != nil && !errors.Is(err, context.Canceled) {
 			logger.Printf("heartbeat exit: %v", err)
 		}
@@ -214,7 +213,15 @@ func clientTLSConfig(cfg *config.Client) *tls.Config {
 	return tc
 }
 
-func heartbeatLoop(ctx context.Context, ctrl net.Conn, br *bufio.Reader, every time.Duration, logger *log.Logger) error {
+func heartbeatLoop(ctx context.Context, ctrl net.Conn, br *bufio.Reader, cfg *config.Client, logger *log.Logger) error {
+	var stats config.HeartbeatStatsInterface = cfg.HeartbeatStats
+	if stats == nil {
+		stats = NewHeartbeatStats(0)
+	}
+	every := cfg.HeartbeatInterval
+	if every <= 0 {
+		every = 30 * time.Second
+	}
 	t := time.NewTicker(every)
 	defer t.Stop()
 	for {
@@ -222,17 +229,42 @@ func heartbeatLoop(ctx context.Context, ctrl net.Conn, br *bufio.Reader, every t
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-t.C:
-			ts := time.Now().Unix()
-			if err := protocol.WriteLine(ctrl, &protocol.Envelope{Type: protocol.TypeHeartbeat, Ts: ts}); err != nil {
+			avg, loss := stats.SnapshotForSend()
+			curTs := time.Now().UnixMilli()
+			env := &protocol.Envelope{
+				Type:     protocol.TypeHeartbeat,
+				DeviceID: cfg.DeviceID,
+				Ts:       time.Now().Unix(), // legacy seconds field, kept for compatibility
+				CurTs:    curTs,
+				NetType:  stats.NetType(),
+				AvgRTT:   avg,
+				LossRate: loss,
+			}
+			stats.Sent()
+			if err := protocol.WriteLine(ctrl, env); err != nil {
+				stats.AckLost()
 				return err
 			}
-			env, err := protocol.ReadLine(br)
+			ack, err := protocol.ReadLine(br)
 			if err != nil {
+				stats.AckLost()
 				return err
 			}
-			if env.Type != protocol.TypeHeartbeatAck {
-				logger.Printf("client: unexpected control message: %q", env.Type)
+			if ack.Type != protocol.TypeHeartbeatAck {
+				stats.AckLost()
+				logger.Printf("client: unexpected control message: %q", ack.Type)
+				continue
 			}
+			if ack.CurTs != curTs {
+				// Out-of-order or echo bug; treat as lost rather than poisoning RTT.
+				stats.AckLost()
+				continue
+			}
+			rtt := time.Now().UnixMilli() - curTs
+			if rtt < 0 {
+				rtt = 0
+			}
+			stats.AckOK(rtt)
 		}
 	}
 }

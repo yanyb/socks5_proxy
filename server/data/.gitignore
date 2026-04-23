@@ -1,0 +1,4 @@
+# GeoLite2 DB files are downloaded at deploy time, not committed.
+# Source: https://github.com/wp-statistics/GeoLite2-City (CC BY-SA 4.0, MaxMind).
+*.mmdb
+*.mmdb.gz

@@ -39,3 +39,14 @@ log_format: "text"
 # Even when both go to the same destination, entries carry stream=device or stream=socks.
 device_log_file: ""   # device tunnel: register / heartbeat / accept / yamux
 socks_log_file:  ""   # SOCKS5 server: per-connection dial through device, socks5 lib errors
+
+# GeoLite2-City DB used to enrich heartbeat events with country/region.
+# Empty disables enrichment (NSQ events still ship with empty geo).
+# Refresh: drop a new .mmdb in this path and `kill -HUP <pid>`.
+# Download script: scripts/update-geoip.sh -> server/data/GeoLite2-City.mmdb
+geoip_db_path: "server/data/GeoLite2-City.mmdb"
+
+# NSQ publish target. Producers connect to a single nsqd (typically local).
+# Empty disables publishing.
+nsqd_tcp_addr: "127.0.0.1:4150"
+heartbeat_topic: "device.heartbeat"

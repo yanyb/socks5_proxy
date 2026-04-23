@@ -16,12 +16,28 @@ import (
 // TLS to the server does not verify the server certificate (trust-on-first-use style); encryption still applies.
 type Client struct {
 	DeviceID          string        `yaml:"device_id" json:"device_id"`
-	Token             string        `yaml:"token" json:"token"`
 	ServerAddr        string        `yaml:"server_addr" json:"server_addr"`
 	HeartbeatInterval time.Duration `yaml:"heartbeat_interval" json:"heartbeat_interval"`
 	// Reconnect backoff after TCP/TLS/yamux failure or session drop (exponential, capped).
 	ReconnectInitialBackoff time.Duration `yaml:"reconnect_initial_backoff" json:"reconnect_initial_backoff"`
 	ReconnectMaxBackoff     time.Duration `yaml:"reconnect_max_backoff" json:"reconnect_max_backoff"`
+
+	// HeartbeatStats is an optional shared stats tracker so callers (e.g. the
+	// mobile bridge) can update NetType from outside the run loop. If nil,
+	// the loop creates a private one with the default 5-sample window.
+	// Type kept as `any` here to avoid an import cycle with client/core; the
+	// loop type-asserts to *core.HeartbeatStats.
+	HeartbeatStats HeartbeatStatsInterface `yaml:"-" json:"-"`
+}
+
+// HeartbeatStatsInterface is the minimum surface the heartbeat loop needs.
+// client/core.HeartbeatStats satisfies it.
+type HeartbeatStatsInterface interface {
+	NetType() string
+	Sent()
+	AckOK(rttMs int64)
+	AckLost()
+	SnapshotForSend() (avgRTTms *int64, lossRate *float64)
 }
 
 // LoadClient reads a client-only config file. Use .json for JSON (e.g. file saved from control-plane API); otherwise YAML is assumed.
@@ -50,7 +66,6 @@ func ParseClientYAML(data []byte) (*Client, error) {
 func ParseClientJSON(data []byte) (*Client, error) {
 	var wire struct {
 		DeviceID                string          `json:"device_id"`
-		Token                   string          `json:"token"`
 		ServerAddr              string          `json:"server_addr"`
 		HeartbeatInterval       json.RawMessage `json:"heartbeat_interval"`
 		ReconnectInitialBackoff json.RawMessage `json:"reconnect_initial_backoff"`
@@ -61,7 +76,6 @@ func ParseClientJSON(data []byte) (*Client, error) {
 	}
 	c := &Client{
 		DeviceID:   wire.DeviceID,
-		Token:      wire.Token,
 		ServerAddr: wire.ServerAddr,
 	}
 	if d, err := parseJSONDurationField(wire.HeartbeatInterval, "heartbeat_interval"); err != nil {

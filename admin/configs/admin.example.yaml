@@ -1,0 +1,44 @@
+# Admin service config. Copy to admin.yaml and edit before running.
+
+http_listen: ":8080"
+
+# AES key for /register payload decryption. Provide exactly one of:
+#   aes_key_b64: base64 of 16/24/32 raw bytes (recommended)
+#   aes_key_hex: hex of 16/24/32 raw bytes
+#   aes_key_text: plain string (any length; SHA-256 -> AES-256)
+# Must match the key built into the mobile app.
+aes_key_text: "change-me-shared-with-app"
+
+mongo_uri: "mongodb://localhost:27017"
+mongo_db: "xsocks5"
+device_collection: "devices"
+
+# Returned to devices on /register success (device client uses these directly).
+server_addr: "your.server.example.com:8443"
+heartbeat_interval: 30          # seconds
+reconnect_initial_backoff: 1    # seconds
+reconnect_max_backoff: 60       # seconds
+
+# Reject /register with |server_now - device_timestamp| > this many seconds.
+max_clock_skew_sec: 300
+
+# HTTP server timeouts.
+read_header_timeout: 5s
+read_timeout: 15s
+write_timeout: 15s
+shutdown_timeout: 10s
+
+# Logging (logrus). level: trace|debug|info|warn|error. format: text|json.
+log_level: "info"
+log_format: "text"
+# "" or "stdout" -> stdout; "stderr" -> stderr; else file path with lumberjack rotation.
+log_file: ""
+
+# Heartbeat consumer (NSQ).
+# Empty list disables consumption (admin runs only as /register HTTP service).
+# Producers (server side) connect to a single nsqd; consumers discover via lookupd.
+nsq_lookupd_http_addrs:
+  - "127.0.0.1:4161"
+heartbeat_topic: "device.heartbeat"
+heartbeat_channel: "admin-mongo"
+heartbeat_concurrency: 8
