@@ -29,6 +29,11 @@ type Server struct {
 	SocksCredentialsFile string `yaml:"socks_credentials_file" json:"socks_credentials_file"`
 	// SocksCredentialsRefresh is the cache reload period. Default 1m.
 	SocksCredentialsRefresh time.Duration `yaml:"socks_credentials_refresh" json:"socks_credentials_refresh"`
+	// SOCKS5 client IP allowlist (CIDRs). When SocksIPWhitelistURL is set, it
+	// takes precedence over the file. Empty means no IP filter (all clients).
+	SocksIPWhitelistFile    string        `yaml:"socks_ip_whitelist_file" json:"socks_ip_whitelist_file"`
+	SocksIPWhitelistURL     string        `yaml:"socks_ip_whitelist_url" json:"socks_ip_whitelist_url"`
+	SocksIPWhitelistRefresh time.Duration `yaml:"socks_ip_whitelist_refresh" json:"socks_ip_whitelist_refresh"`
 	SessionHeartbeatTimeout time.Duration `yaml:"session_heartbeat_timeout" json:"session_heartbeat_timeout"`
 	DeviceWaitTimeout       time.Duration `yaml:"device_wait_timeout" json:"device_wait_timeout"`
 	ConnectResultTimeout    time.Duration `yaml:"connect_result_timeout" json:"connect_result_timeout"`
@@ -87,21 +92,26 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		ShutdownTimeout         json.RawMessage `json:"shutdown_timeout"`
 		SocksCredentialsFile    string          `json:"socks_credentials_file"`
 		SocksCredentialsRefresh json.RawMessage `json:"socks_credentials_refresh"`
+		SocksIPWhitelistFile    string          `json:"socks_ip_whitelist_file"`
+		SocksIPWhitelistURL     string          `json:"socks_ip_whitelist_url"`
+		SocksIPWhitelistRefresh json.RawMessage `json:"socks_ip_whitelist_refresh"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, err
 	}
 	s := &Server{
-		SocksListen:       wire.SocksListen,
-		DeviceListen:      wire.DeviceListen,
-		TLSCertFile:       wire.TLSCertFile,
-		TLSKeyFile:        wire.TLSKeyFile,
+		SocksListen:          wire.SocksListen,
+		DeviceListen:         wire.DeviceListen,
+		TLSCertFile:          wire.TLSCertFile,
+		TLSKeyFile:           wire.TLSKeyFile,
 		SocksAuthPassword:    wire.SocksAuthPassword,
 		LogLevel:             wire.LogLevel,
 		LogFormat:            wire.LogFormat,
 		DeviceLogFile:        wire.DeviceLogFile,
 		SocksLogFile:         wire.SocksLogFile,
 		SocksCredentialsFile: wire.SocksCredentialsFile,
+		SocksIPWhitelistFile: wire.SocksIPWhitelistFile,
+		SocksIPWhitelistURL:  wire.SocksIPWhitelistURL,
 	}
 	var err error
 	if s.SessionHeartbeatTimeout, err = parseJSONDurationField(wire.SessionHeartbeatTimeout, "session_heartbeat_timeout"); err != nil {
@@ -117,6 +127,9 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		return nil, err
 	}
 	if s.SocksCredentialsRefresh, err = parseJSONDurationField(wire.SocksCredentialsRefresh, "socks_credentials_refresh"); err != nil {
+		return nil, err
+	}
+	if s.SocksIPWhitelistRefresh, err = parseJSONDurationField(wire.SocksIPWhitelistRefresh, "socks_ip_whitelist_refresh"); err != nil {
 		return nil, err
 	}
 	return validateServer(s)
@@ -140,6 +153,9 @@ func validateServer(s *Server) (*Server, error) {
 	}
 	if s.SocksCredentialsRefresh == 0 {
 		s.SocksCredentialsRefresh = time.Minute
+	}
+	if s.SocksIPWhitelistRefresh == 0 {
+		s.SocksIPWhitelistRefresh = time.Minute
 	}
 	return s, nil
 }

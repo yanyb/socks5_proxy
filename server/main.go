@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"net"
+	"net/http"
 	"os/signal"
 	"strings"
 	"sync"
@@ -92,8 +93,13 @@ func main() {
 		}
 	}()
 
+	socksRule, err := buildSocksRuleSet(ctx, srvCfg, socksLog)
+	if err != nil {
+		bootLog.WithError(err).Fatal("init socks5 rule set (IP whitelist)")
+	}
 	opts := []socks5.Option{
 		socks5.WithLogger(socksLog),
+		socks5.WithRule(socksRule),
 		socks5.WithDialAndRequest(func(ctx context.Context, network, addr string, req *socks5.Request) (net.Conn, error) {
 			user := socksUsername(req)
 			targetID, err := reg.ResolveDeviceForDial(user)
@@ -127,13 +133,14 @@ func main() {
 	}()
 
 	bootLog.WithFields(logrus.Fields{
-		"socks5":           srvCfg.SocksListen,
-		"device_tls":       srvCfg.DeviceListen,
-		"socks_auth":       authHint,
-		"online_devices":   reg.ListOnline(),
-		"device_log_file":  orStdout(srvCfg.DeviceLogFile),
-		"socks_log_file":   orStdout(srvCfg.SocksLogFile),
-		"shutdown_timeout": srvCfg.ShutdownTimeout.String(),
+		"socks5":             srvCfg.SocksListen,
+		"device_tls":         srvCfg.DeviceListen,
+		"socks_auth":         authHint,
+		"socks_ip_whitelist": socksIPWhitelistHint(srvCfg),
+		"online_devices":     reg.ListOnline(),
+		"device_log_file":    orStdout(srvCfg.DeviceLogFile),
+		"socks_log_file":     orStdout(srvCfg.SocksLogFile),
+		"shutdown_timeout":   srvCfg.ShutdownTimeout.String(),
 	}).Info("server started")
 
 	<-ctx.Done()
@@ -170,6 +177,45 @@ func main() {
 	case <-time.After(timeout):
 		bootLog.WithField("timeout", timeout.String()).Warn("shutdown timed out, exiting")
 	}
+}
+
+// buildSocksRuleSet returns a socks5 RuleSet. When socks_ip_whitelist_url or
+// socks_ip_whitelist_file is set, a cached IP allowlist (default refresh 1m) is
+// applied before the usual command permit (CONNECT only). If both are set, URL
+// is used. No IP key in config => no source => base PermitCommand only.
+func buildSocksRuleSet(ctx context.Context, cfg *config.Server, log *logrus.Logger) (socks5.RuleSet, error) {
+	inner := socks5.RuleSet(&socks5.PermitCommand{
+		EnableConnect: true, EnableBind: false, EnableAssociate: false,
+	})
+	refresh := cfg.SocksIPWhitelistRefresh
+
+	if u := strings.TrimSpace(cfg.SocksIPWhitelistURL); u != "" {
+		src := &hub.URLJSONIPWhitelistSource{URL: u, Client: &http.Client{Timeout: 30 * time.Second}}
+		c := hub.NewIPWhitelistCache(src, refresh, log)
+		if err := c.Start(ctx); err != nil {
+			return nil, err
+		}
+		return hub.NewIPRuleSet(c, inner, log), nil
+	}
+	if p := strings.TrimSpace(cfg.SocksIPWhitelistFile); p != "" {
+		src := &hub.JSONFileIPWhitelistSource{Path: p}
+		c := hub.NewIPWhitelistCache(src, refresh, log)
+		if err := c.Start(ctx); err != nil {
+			return nil, err
+		}
+		return hub.NewIPRuleSet(c, inner, log), nil
+	}
+	return inner, nil
+}
+
+func socksIPWhitelistHint(cfg *config.Server) string {
+	if u := strings.TrimSpace(cfg.SocksIPWhitelistURL); u != "" {
+		return "url (refresh " + cfg.SocksIPWhitelistRefresh.String() + "): " + u
+	}
+	if p := strings.TrimSpace(cfg.SocksIPWhitelistFile); p != "" {
+		return "file (refresh " + cfg.SocksIPWhitelistRefresh.String() + "): " + p
+	}
+	return "off"
 }
 
 // configureSocksAuth wires the SOCKS5 credential store. Precedence:

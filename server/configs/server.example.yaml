@@ -17,6 +17,12 @@ tls_key_file: "server/configs/server.key"
 socks_auth_password: ""
 socks_credentials_file: ""        # e.g. "server/configs/credentials.json"
 socks_credentials_refresh: 1m
+# Optional: restrict which client IPs may use SOCKS5 (by CIDR). JSON array of
+# CIDR or host IPs, see server/configs/socks_ip_whitelist.example.json.
+# If socks_ip_whitelist_url is set, it wins over the file (e.g. admin HTTP API).
+socks_ip_whitelist_file: ""
+socks_ip_whitelist_url: ""         # e.g. "https://admin.internal/api/socks/ip-allowlist"
+socks_ip_whitelist_refresh: 1m
 # Optional: drop device session if no app-level heartbeat within this duration (0 = disable).
 session_heartbeat_timeout: 90s
 # Wait for a device to register before failing SOCKS5 dial (0 = no wait).
