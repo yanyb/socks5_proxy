@@ -35,6 +35,19 @@ func (r *Registry) ListOnline() []string {
 	return out
 }
 
+// OnlineSet returns the same data as ListOnline but as a set, so set-membership
+// checks ("is X online?") are O(1). Implements scheduler.DeviceLister without
+// requiring this package to import the scheduler.
+func (r *Registry) OnlineSet() map[string]struct{} {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make(map[string]struct{}, len(r.sessions))
+	for id := range r.sessions {
+		out[id] = struct{}{}
+	}
+	return out
+}
+
 // OnlineCount returns how many devices are connected.
 func (r *Registry) OnlineCount() int {
 	r.mu.RLock()

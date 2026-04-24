@@ -12,24 +12,35 @@ import (
 	"syscall"
 	"time"
 
-	"xsocks5/protocol/heartbeat"
+	"xsocks5/common/logger"
+	"xsocks5/common/protocol/heartbeat"
 	"xsocks5/server/config"
 	"xsocks5/server/geo"
 	"xsocks5/server/hub"
-	"xsocks5/server/logger"
 	"xsocks5/server/nsqpub"
+	"xsocks5/server/scheduler"
 	"xsocks5/server/sockssetup"
 
 	"github.com/sirupsen/logrus"
 	"github.com/things-go/go-socks5"
 )
 
-// heartbeatSink fans a hub.HeartbeatRecord into geo lookup + NSQ publish.
-// Built once in main and shared by every device session. Logs and swallows
-// errors so device handlers stay decoupled from downstream health.
+// heartbeatSink is the single fan-out for every device heartbeat. It runs
+// three steps in order:
+//
+//  1. Resolve the remote IP to geo info (best-effort; nil on private IPs).
+//  2. Update the in-memory scheduler pool so future Pick() calls see fresh
+//     country / RTT / loss for this device.
+//  3. Publish the event to NSQ so admin can persist it.
+//
+// All errors are logged and swallowed -- a downstream blip must never look
+// like a network failure to phones in the field. The scheduler pool update
+// happens before the NSQ publish so even a degraded NSQ doesn't starve
+// scheduling decisions.
 type heartbeatSink struct {
-	geo geo.Lookuper
-	pub nsqpub.Publisher
+	geo  geo.Lookuper
+	pool *scheduler.DevicePool // never nil; may be unused when scheduler disabled
+	pub  nsqpub.Publisher
 }
 
 func (s *heartbeatSink) OnHeartbeat(ctx context.Context, r hub.HeartbeatRecord) error {
@@ -46,6 +57,15 @@ func (s *heartbeatSink) OnHeartbeat(ctx context.Context, r hub.HeartbeatRecord) 
 		if ip := net.ParseIP(r.RemoteIP); ip != nil {
 			evt.Geo = s.geo.Lookup(ip)
 		}
+	}
+	if s.pool != nil {
+		s.pool.Update(r.DeviceID, scheduler.DeviceUpdate{
+			Country:  evt.Geo.Country,
+			NetType:  r.NetType,
+			AvgRTTms: r.AvgRTTms,
+			LossRate: r.LossRate,
+			SeenAt:   time.UnixMilli(r.ServerRecvMs),
+		})
 	}
 	if s.pub == nil {
 		return nil
@@ -103,9 +123,39 @@ func main() {
 		pub = p
 		defer p.Close()
 	}
-	hbSink := &heartbeatSink{geo: geoLookuper, pub: pub}
-
 	reg := hub.NewRegistry()
+
+	// Scheduler scaffolding. The pool is always built (cheap) so heartbeats
+	// always feed it; the Scheduler itself is only constructed when the
+	// scheduler username scheme is enabled.
+	pool := scheduler.NewPool(nil)
+	var sched *scheduler.Scheduler
+	if sockssetup.SchedulerEnabled(srvCfg) {
+		sel := scheduler.NewScoredSelector()
+		if srvCfg.SchedulerLossPenaltyMs > 0 {
+			sel.LossPenaltyMs = srvCfg.SchedulerLossPenaltyMs
+		}
+		if srvCfg.SchedulerDefaultRTTms > 0 {
+			sel.DefaultRTTms = srvCfg.SchedulerDefaultRTTms
+		}
+		if srvCfg.SchedulerStaleAfter > 0 {
+			sel.StaleAfter = srvCfg.SchedulerStaleAfter
+		}
+		s, err := scheduler.New(scheduler.Config{
+			Lister:   reg,
+			Pool:     pool,
+			Leases:   scheduler.NewLeases(nil),
+			Selector: sel,
+			Log:      socksLog,
+		})
+		if err != nil {
+			bootLog.WithError(err).Fatal("scheduler init")
+		}
+		s.StartSweeper(ctx, srvCfg.SchedulerSweepInterval)
+		defer s.Stop()
+		sched = s
+	}
+	hbSink := &heartbeatSink{geo: geoLookuper, pool: pool, pub: pub}
 
 	cert, err := tls.LoadX509KeyPair(srvCfg.TLSCertFile, srvCfg.TLSKeyFile)
 	if err != nil {
@@ -158,23 +208,7 @@ func main() {
 	opts := []socks5.Option{
 		socks5.WithLogger(socksLog),
 		socks5.WithRule(socksRule),
-		socks5.WithDialAndRequest(func(ctx context.Context, network, addr string, req *socks5.Request) (net.Conn, error) {
-			user := hub.SOCKS5Username(req)
-			targetID, err := reg.ResolveDeviceForDial(user)
-			if err != nil {
-				return nil, err
-			}
-			return hub.DialThroughDevice(
-				ctx,
-				reg,
-				socksLog,
-				targetID,
-				srvCfg.DeviceWaitTimeout,
-				srvCfg.ConnectResultTimeout,
-				network,
-				addr,
-			)
-		}),
+		socks5.WithDialAndRequest(buildDialAndRequest(srvCfg, reg, sched, socksLog)),
 	}
 	authHint, err := sockssetup.ConfigureSocksAuth(ctx, srvCfg, socksLog, &opts)
 	if err != nil {
@@ -202,6 +236,7 @@ func main() {
 		"geoip_db":           srvCfg.GeoIPDBPath,
 		"nsqd":               srvCfg.NSQdTCPAddr,
 		"heartbeat_topic":    nonEmpty(srvCfg.HeartbeatTopic, heartbeat.Topic),
+		"scheduler":          sched != nil,
 	}).Info("server started")
 
 	<-ctx.Done()
@@ -267,4 +302,46 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// buildDialAndRequest produces the SOCKS5 dial callback. Two modes:
+//
+//   - sched == nil  (legacy "device_id" scheme): the SOCKS5 username IS the
+//     device_id; we resolve via the registry and dial straight through.
+//
+//   - sched != nil  (scheduler scheme): the SOCKS5 username is the 5-segment
+//     "B_<id>_<country>_<dur>_<sess>". The scheduler returns (deviceID,
+//     handle); we wrap the resulting Conn so handle.Close() runs when the
+//     SOCKS5 stream ends, keeping the lease refcount accurate.
+//
+// Splitting this out of main keeps the closure tidy and lets tests cover the
+// dial logic without spinning up listeners.
+func buildDialAndRequest(
+	cfg *config.Server,
+	reg *hub.Registry,
+	sched *scheduler.Scheduler,
+	log *logrus.Logger,
+) func(context.Context, string, string, *socks5.Request) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string, req *socks5.Request) (net.Conn, error) {
+		user := hub.SOCKS5Username(req)
+		if sched == nil {
+			targetID, err := reg.ResolveDeviceForDial(user)
+			if err != nil {
+				return nil, err
+			}
+			return hub.DialThroughDevice(ctx, reg, log, targetID,
+				cfg.DeviceWaitTimeout, cfg.ConnectResultTimeout, network, addr)
+		}
+		deviceID, handle, err := sched.Pick(ctx, user)
+		if err != nil {
+			return nil, err
+		}
+		conn, err := hub.DialThroughDevice(ctx, reg, log, deviceID,
+			cfg.DeviceWaitTimeout, cfg.ConnectResultTimeout, network, addr)
+		if err != nil {
+			_ = handle.Close()
+			return nil, err
+		}
+		return scheduler.WrapConn(conn, handle), nil
+	}
 }

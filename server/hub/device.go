@@ -7,7 +7,7 @@ import (
 	"net"
 	"sync"
 	"time"
-	"xsocks5/protocol"
+	"xsocks5/common/protocol"
 
 	"github.com/hashicorp/yamux"
 	"github.com/sirupsen/logrus"

@@ -9,7 +9,7 @@ import (
 	"net"
 	"time"
 
-	"xsocks5/protocol"
+	"xsocks5/common/protocol"
 
 	"github.com/sirupsen/logrus"
 )

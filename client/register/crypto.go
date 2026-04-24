@@ -3,7 +3,7 @@ package register
 import (
 	"encoding/base64"
 
-	"xsocks5/protocol/aescbc"
+	"xsocks5/common/crypto/aescbc"
 )
 
 // BuildRegisterPlayloadB64 implements the spec for JSON B's "playload" field:

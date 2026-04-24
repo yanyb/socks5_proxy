@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"xsocks5/client/config"
-	"xsocks5/protocol"
+	"xsocks5/common/protocol"
 
 	"github.com/hashicorp/yamux"
 )

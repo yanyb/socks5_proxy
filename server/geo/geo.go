@@ -10,7 +10,7 @@ import (
 	"os"
 	"sync/atomic"
 
-	"xsocks5/protocol/heartbeat"
+	"xsocks5/common/protocol/heartbeat"
 
 	"github.com/oschwald/geoip2-golang"
 )

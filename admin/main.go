@@ -13,12 +13,11 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-
 	"xsocks5/admin/config"
 	"xsocks5/admin/handler"
 	"xsocks5/admin/nsqcons"
 	"xsocks5/admin/store"
-	"xsocks5/server/logger"
+	"xsocks5/common/logger"
 
 	"github.com/sirupsen/logrus"
 )

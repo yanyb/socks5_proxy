@@ -43,7 +43,7 @@ type Server struct {
 	// LogFormat is "text" (default) or "json".
 	LogFormat string `yaml:"log_format" json:"log_format"`
 	// DeviceLogFile routes the device-tunnel logger output. "" or "stdout" -> stdout,
-	// "stderr" -> stderr, else a file path (size-rotated + archived via lumberjack; see server/logger).
+	// "stderr" -> stderr, else a file path (size-rotated + archived via lumberjack; see common/logger).
 	DeviceLogFile string `yaml:"device_log_file" json:"device_log_file"`
 	// SocksLogFile routes the SOCKS5 logger output. Same semantics as DeviceLogFile.
 	SocksLogFile string `yaml:"socks_log_file" json:"socks_log_file"`
@@ -64,6 +64,26 @@ type Server struct {
 	NSQdTCPAddr string `yaml:"nsqd_tcp_addr" json:"nsqd_tcp_addr"`
 	// HeartbeatTopic is the NSQ topic for heartbeat events. Default "device.heartbeat".
 	HeartbeatTopic string `yaml:"heartbeat_topic" json:"heartbeat_topic"`
+
+	// SocksUsernameScheme controls how the SOCKS5 username is interpreted by
+	// auth + dial. Two values:
+	//
+	//   "device_id"  (default, legacy): username == device_id; auth via the
+	//                shared password / credential cache; dial picks that exact
+	//                device.
+	//
+	//   "scheduler": username is "B_<id>_<country>_<dur>_<sess>" (5 parts).
+	//                Auth uses (user_id, session) as the lookup key; the
+	//                scheduler picks a device by country + RTT/loss + sticky
+	//                lease. See server/scheduler.
+	SocksUsernameScheme string `yaml:"socks_username_scheme" json:"socks_username_scheme"`
+	// SchedulerLossPenaltyMs / SchedulerDefaultRTTms / SchedulerStaleAfter
+	// tune the default ScoredSelector. Zeros use the package defaults.
+	SchedulerLossPenaltyMs float64       `yaml:"scheduler_loss_penalty_ms" json:"scheduler_loss_penalty_ms"`
+	SchedulerDefaultRTTms  int64         `yaml:"scheduler_default_rtt_ms" json:"scheduler_default_rtt_ms"`
+	SchedulerStaleAfter    time.Duration `yaml:"scheduler_stale_after" json:"scheduler_stale_after"`
+	// SchedulerSweepInterval is how often expired leases are reclaimed. Default 1m.
+	SchedulerSweepInterval time.Duration `yaml:"scheduler_sweep_interval" json:"scheduler_sweep_interval"`
 }
 
 // LoadServer reads a server-only config file. Use .json for JSON; otherwise YAML is assumed.
@@ -112,6 +132,11 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		GeoIPDBPath             string          `json:"geoip_db_path"`
 		NSQdTCPAddr             string          `json:"nsqd_tcp_addr"`
 		HeartbeatTopic          string          `json:"heartbeat_topic"`
+		SocksUsernameScheme     string          `json:"socks_username_scheme"`
+		SchedulerLossPenaltyMs  float64         `json:"scheduler_loss_penalty_ms"`
+		SchedulerDefaultRTTms   int64           `json:"scheduler_default_rtt_ms"`
+		SchedulerStaleAfter     json.RawMessage `json:"scheduler_stale_after"`
+		SchedulerSweepInterval  json.RawMessage `json:"scheduler_sweep_interval"`
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return nil, err
@@ -129,9 +154,12 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		SocksCredentialsFile: wire.SocksCredentialsFile,
 		SocksIPWhitelistFile: wire.SocksIPWhitelistFile,
 		SocksIPWhitelistURL:  wire.SocksIPWhitelistURL,
-		GeoIPDBPath:          wire.GeoIPDBPath,
-		NSQdTCPAddr:          wire.NSQdTCPAddr,
-		HeartbeatTopic:       wire.HeartbeatTopic,
+		GeoIPDBPath:            wire.GeoIPDBPath,
+		NSQdTCPAddr:            wire.NSQdTCPAddr,
+		HeartbeatTopic:         wire.HeartbeatTopic,
+		SocksUsernameScheme:    wire.SocksUsernameScheme,
+		SchedulerLossPenaltyMs: wire.SchedulerLossPenaltyMs,
+		SchedulerDefaultRTTms:  wire.SchedulerDefaultRTTms,
 	}
 	var err error
 	if s.SessionHeartbeatTimeout, err = parseJSONDurationField(wire.SessionHeartbeatTimeout, "session_heartbeat_timeout"); err != nil {
@@ -150,6 +178,12 @@ func ParseServerJSON(data []byte) (*Server, error) {
 		return nil, err
 	}
 	if s.SocksIPWhitelistRefresh, err = parseJSONDurationField(wire.SocksIPWhitelistRefresh, "socks_ip_whitelist_refresh"); err != nil {
+		return nil, err
+	}
+	if s.SchedulerStaleAfter, err = parseJSONDurationField(wire.SchedulerStaleAfter, "scheduler_stale_after"); err != nil {
+		return nil, err
+	}
+	if s.SchedulerSweepInterval, err = parseJSONDurationField(wire.SchedulerSweepInterval, "scheduler_sweep_interval"); err != nil {
 		return nil, err
 	}
 	return validateServer(s)
@@ -176,6 +210,15 @@ func validateServer(s *Server) (*Server, error) {
 	}
 	if s.SocksIPWhitelistRefresh == 0 {
 		s.SocksIPWhitelistRefresh = time.Minute
+	}
+	switch strings.ToLower(strings.TrimSpace(s.SocksUsernameScheme)) {
+	case "", "device_id", "scheduler":
+		// ok
+	default:
+		return nil, fmt.Errorf("socks_username_scheme: must be device_id or scheduler (got %q)", s.SocksUsernameScheme)
+	}
+	if s.SchedulerSweepInterval == 0 {
+		s.SchedulerSweepInterval = time.Minute
 	}
 	return s, nil
 }

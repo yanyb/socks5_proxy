@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"xsocks5/admin/store"
-	"xsocks5/protocol/heartbeat"
+	"xsocks5/common/protocol/heartbeat"
 
 	"github.com/nsqio/go-nsq"
 	"github.com/sirupsen/logrus"

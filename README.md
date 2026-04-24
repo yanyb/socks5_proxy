@@ -7,7 +7,7 @@ SOCKS5 proxy on the cloud, **egress through a phone (or any device)** over **TLS
 - `server/` — listens for SOCKS5 users and for device connections (TLS, then yamux). Subpackages: `server/hub`, `server/config`, `server/configs`.
 - `client/` — runs on the device: registers, heartbeats, dials targets when the server opens streams. Subpackages: `client/core`, `client/config`, `client/configs`.
 - `mobile/` — gomobile bind target (Android AAR) that reuses `client/core`.
-- `protocol/` — wire protocol shared by server and client (newline-delimited JSON envelopes).
+- `common/` — shared code used by multiple services: `common/logger` (logrus + lumberjack), `common/protocol` (NDJSON envelope, `aescbc`, `heartbeat` event schema).
 - `admin/` — admin/control plane (IP whitelist, auth, quotas — WIP).
 - `third_party/` — local forks of `go-socks5` and `yamux` referenced by `go.mod` via `replace`.
 - `server/configs/server.example.yaml` — server-only settings; copy to `server/configs/server.yaml`.

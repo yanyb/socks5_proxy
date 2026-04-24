@@ -23,7 +23,7 @@ import (
 
 	"xsocks5/admin/config"
 	"xsocks5/admin/store"
-	"xsocks5/protocol/aescbc"
+	"xsocks5/common/crypto/aescbc"
 
 	"github.com/sirupsen/logrus"
 )

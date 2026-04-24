@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"xsocks5/protocol/heartbeat"
+	"xsocks5/common/protocol/heartbeat"
 
 	"github.com/nsqio/go-nsq"
 	"github.com/sirupsen/logrus"

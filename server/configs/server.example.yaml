@@ -35,7 +35,7 @@ shutdown_timeout: 10s
 log_level: "info"
 log_format: "text"
 # Where each log stream is written. "" or "stdout" -> stdout; "stderr" -> stderr;
-# else a file path: writes use lumberjack (size rotation, gzip of old files; see server/logger).
+# else a file path: writes use lumberjack (size rotation, gzip of old files; see common/logger).
 # Even when both go to the same destination, entries carry stream=device or stream=socks.
 device_log_file: ""   # device tunnel: register / heartbeat / accept / yamux
 socks_log_file:  ""   # SOCKS5 server: per-connection dial through device, socks5 lib errors
@@ -50,3 +50,22 @@ geoip_db_path: "server/data/GeoLite2-City.mmdb"
 # Empty disables publishing.
 nsqd_tcp_addr: "127.0.0.1:4150"
 heartbeat_topic: "device.heartbeat"
+
+# How the SOCKS5 username is interpreted:
+#   "device_id" (default, legacy) -> username == device_id; the registry
+#                                     dispatches that exact device.
+#   "scheduler"                   -> username is "B_<id>_<country>_<dur>_<sess>"
+#                                     (5 underscore segments). The scheduler:
+#                                       * filters online devices by country
+#                                       * picks lowest score = avg_rtt + loss_penalty * loss_rate
+#                                       * pins the device for <dur> minutes (sticky lease)
+#                                       * refuses devices already leased by other users
+#                                     Auth uses (user_id, session) as the credentials key,
+#                                     so country/duration changes don't require new entries.
+socks_username_scheme: "device_id"
+# Default ScoredSelector tuning. Zeros use the package defaults
+# (loss_penalty 1000ms, default_rtt 200ms, stale_after 90s, sweep 1m).
+scheduler_loss_penalty_ms: 0
+scheduler_default_rtt_ms: 0
+scheduler_stale_after: 0s
+scheduler_sweep_interval: 1m
